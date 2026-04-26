@@ -1,13 +1,13 @@
 const mongoose = require('mongoose');
 
 const settingsSchema = new mongoose.Schema({
-  shopName:        { type: String, default: 'Sri Venkateshwara General Store' },
+  shopName:        { type: String, default: '' },
   address:         { type: String, default: '' },
   phone:           { type: String, default: '' },
   gstin:           { type: String, default: '' },
-  defaultMinLevel: { type: Number, default: 10 },
+  defaultMinLevel: { type: Number, default: 4 },
   currency:        { type: String, default: '₹' },
-  password:        { type: String, default: 'shop123' },
+  password:        { type: String, default: '' },
 });
 
 settingsSchema.set('toJSON', {

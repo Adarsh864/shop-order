@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Account — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <rect width="48" height="48" rx="12" fill="#2563eb"/>
+        <path d="M12 34V18l12-6 12 6v16" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+        <rect x="19" y="26" width="10" height="8" rx="1" fill="#fff"/>
+        <circle cx="24" cy="19" r="3" fill="#93c5fd"/>
+      </svg>
+      <h1>ShopOrder</h1>
+      <p>Create your shop account</p>
+    </div>
+
+    <form id="signupForm">
+      <div class="form-group">
+        <label for="shopName">Shop Name *</label>
+        <input type="text" id="shopName" placeholder="e.g. Adarsh Bakery" autocomplete="organization" required>
+      </div>
+      <div class="form-group">
+        <label for="password">Password *</label>
+        <input type="password" id="password" placeholder="Min 4 characters" autocomplete="new-password" required minlength="4">
+      </div>
+      <div class="form-group">
+        <label for="confirmPassword">Confirm Password *</label>
+        <input type="password" id="confirmPassword" placeholder="Re-enter password" autocomplete="new-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="signupBtn" style="width:100%;justify-content:center;padding:.7rem;">
+        Create Account
+      </button>
+      <p id="signupError" style="color:#dc2626;font-size:.8rem;margin-top:.5rem;display:none;"></p>
+    </form>
+
+    <p style="text-align:center;margin-top:1.25rem;font-size:.82rem;color:var(--text-muted);">
+      Already have an account? <a href="index.html" style="color:var(--primary);">Login</a>
+    </p>
+  </div>
+
+  <script>
+    // If account already exists, go to login
+    fetch('/api/auth/setup-status').then(r => r.json()).then(d => {
+      if (d.hasAccount) window.location.href = 'index.html';
+    }).catch(() => {});
+
+    document.getElementById('signupForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn    = document.getElementById('signupBtn');
+      const errEl  = document.getElementById('signupError');
+      const shopName       = document.getElementById('shopName').value.trim();
+      const password       = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+
+      errEl.style.display = 'none';
+      if (password !== confirmPassword) {
+        errEl.textContent = 'Passwords do not match';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Creating account…';
+      try {
+        const res = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopName, password }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          window.location.href = 'index.html';
+        } else {
+          errEl.textContent = data.error || 'Signup failed';
+          errEl.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Create Account';
+        }
+      } catch (err) {
+        errEl.textContent = 'Server error';
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Create Account';
+      }
+    });
+  </script>
+</body>
+</html>
