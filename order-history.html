@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order History — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .month-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: .75rem;
+      margin-bottom: 1.5rem;
+    }
+    .month-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      box-shadow: var(--shadow);
+      border-left: 4px solid var(--primary);
+    }
+    .month-card.current { border-left-color: var(--success); }
+    .month-card .mc-month { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: .3rem; }
+    .month-card .mc-total { font-size: 1.4rem; font-weight: 700; color: var(--text); }
+    .month-card .mc-meta  { font-size: .78rem; color: var(--text-muted); margin-top: .2rem; }
+    .section-title { font-size: 1rem; font-weight: 700; margin-bottom: .875rem; color: var(--text); display: flex; align-items: center; gap: .5rem; }
+    .section-title span { background: var(--primary); color: #fff; border-radius: 999px; font-size: .7rem; padding: .15rem .5rem; }
+  </style>
+</head>
+<body>
+  <nav id="navbar"></nav>
+  <div class="page">
+    <h1 class="page-title">Order History</h1>
+
+    <!-- Monthly summary -->
+    <div class="section-title">Monthly Spend Summary <span id="monthCount">0</span></div>
+    <div class="month-grid" id="monthGrid">
+      <div style="color:var(--text-muted);font-size:.85rem;padding:.5rem;">Loading…</div>
+    </div>
+
+    <!-- Recent orders (last 30 days) -->
+    <div class="section-title" style="margin-top:.5rem;">
+      Recent Orders (Last 30 Days) <span id="recentCount">0</span>
+    </div>
+    <div class="toolbar">
+      <input type="date" id="dateFrom" onchange="renderOrders()" title="From date">
+      <input type="date" id="dateTo"   onchange="renderOrders()" title="To date">
+      <select id="statusFilter" onchange="renderOrders()" style="width:auto;">
+        <option value="">All Status</option>
+        <option value="pending">Pending</option>
+        <option value="received">Received</option>
+      </select>
+      <button class="btn btn-secondary" onclick="clearFilters()">Clear</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>PO Number</th><th>Date</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="historyBody"><tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Detail modal -->
+  <div class="modal-overlay" id="detailModal" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-title"><span id="detailTitle">Order Details</span><button class="modal-close" onclick="closeDetail()">&times;</button></div>
+      <div id="detailContent"></div>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="js/pdf.js"></script>
+  <script>
+    let allOrders = [], settings = {};
+
+    const MONTH_NAMES = ['January','February','March','April','May','June',
+                         'July','August','September','October','November','December'];
+
+    async function init() {
+      const ok = await requireLogin();
+      if (!ok) return;
+      await renderNavbar();
+      [allOrders, settings] = await Promise.all([getOrders(), getSettings()]);
+      renderMonthlySummary();
+      renderOrders();
+    }
+
+    /* ── Monthly summary ── */
+    function renderMonthlySummary() {
+      const cur = (settings && settings.currency) || '₹';
+      const now = new Date();
+      const map = {};
+
+      allOrders.forEach(o => {
+        const d = new Date(o.createdAt || o.date);
+        if (isNaN(d)) return;
+        const key = d.getFullYear() + '-' + String(d.getMonth()).padStart(2, '0');
+        if (!map[key]) map[key] = { year: d.getFullYear(), month: d.getMonth(), total: 0, count: 0 };
+        map[key].total += Number(o.totalEstimate) || 0;
+        map[key].count++;
+      });
+
+      const months = Object.values(map).sort((a, b) =>
+        b.year !== a.year ? b.year - a.year : b.month - a.month
+      );
+
+      document.getElementById('monthCount').textContent = months.length;
+      const grid = document.getElementById('monthGrid');
+
+      if (months.length === 0) {
+        grid.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:.5rem;">No orders yet</div>';
+        return;
+      }
+
+      grid.innerHTML = months.map(m => {
+        const isCurrent = m.year === now.getFullYear() && m.month === now.getMonth();
+        return `<div class="month-card ${isCurrent ? 'current' : ''}">
+          <div class="mc-month">${MONTH_NAMES[m.month]} ${m.year}${isCurrent ? ' ← current' : ''}</div>
+          <div class="mc-total">${cur}${m.total.toFixed(2)}</div>
+          <div class="mc-meta">${m.count} order${m.count !== 1 ? 's' : ''}</div>
+        </div>`;
+      }).join('');
+    }
+
+    /* ── Recent orders table (last 30 days only) ── */
+    function renderOrders() {
+      const from   = document.getElementById('dateFrom').value;
+      const to     = document.getElementById('dateTo').value;
+      const status = document.getElementById('statusFilter').value;
+      const cur    = (settings && settings.currency) || '₹';
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const orders = allOrders.filter(o => {
+        const d = new Date(o.createdAt || o.date);
+        // Default: only last 30 days. Date filter overrides this.
+        if (!from && !to && d < cutoff) return false;
+        if (status && o.status !== status) return false;
+        if (from && d < new Date(from)) return false;
+        if (to   && d > new Date(to + 'T23:59:59')) return false;
+        return true;
+      });
+
+      document.getElementById('recentCount').textContent = orders.length;
+      const tbody = document.getElementById('historyBody');
+
+      if (orders.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:2rem;">No orders in last 30 days</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = orders.map(o => {
+        const isPending = o.status !== 'received';
+        return `<tr>
+          <td data-label="PO Number"><strong>${escHtml(o.poNumber)}</strong></td>
+          <td data-label="Date">${escHtml(o.date)}</td>
+          <td data-label="Items">${o.items.length} item${o.items.length !== 1 ? 's' : ''}</td>
+          <td data-label="Total">${cur}${Number(o.totalEstimate).toFixed(2)}</td>
+          <td data-label="Status"><span class="badge ${isPending ? 'badge-info' : 'badge-success'}">${isPending ? 'Pending' : 'Received'}</span></td>
+          <td data-label="Actions"><div class="action-group">
+            <button class="btn btn-sm btn-outline" onclick="viewDetail('${o.id}')">View</button>
+            <button class="btn btn-sm btn-primary" onclick="redownloadPDF('${o.id}')">PDF</button>
+            ${isPending ? `<button class="btn btn-sm btn-success" onclick="markReceived('${o.id}')">Received</button>` : ''}
+            <button class="btn btn-sm btn-danger" onclick="removeOrder('${o.id}')">Del</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+    }
+
+    function clearFilters() {
+      document.getElementById('dateFrom').value = '';
+      document.getElementById('dateTo').value = '';
+      document.getElementById('statusFilter').value = '';
+      renderOrders();
+    }
+
+    async function markReceived(id) {
+      if (!confirmDialog('Mark as received? Stock quantities will be added to inventory.')) return;
+      try {
+        await updateOrderStatus(id, 'received');
+        allOrders = await getOrders();
+        renderMonthlySummary();
+        showToast('Order received. Inventory stock updated.');
+        renderOrders();
+      } catch (err) {
+        showToast(err.message || 'Failed to update order', 'error');
+      }
+    }
+
+    function redownloadPDF(id) {
+      const order = allOrders.find(o => o.id === id);
+      if (!order) { showToast('Order not found', 'error'); return; }
+      try { generatePDF(order, settings); showToast('PDF downloaded'); }
+      catch (err) { showToast('PDF error: ' + err.message, 'error'); }
+    }
+
+    async function removeOrder(id) {
+      if (!confirmDialog('Delete this order permanently?')) return;
+      await deleteOrder(id);
+      allOrders = allOrders.filter(o => o.id !== id);
+      renderMonthlySummary();
+      showToast('Order deleted', 'error');
+      renderOrders();
+    }
+
+    function viewDetail(id) {
+      const order = allOrders.find(o => o.id === id);
+      if (!order) return;
+      const cur = (settings && settings.currency) || '₹';
+      document.getElementById('detailTitle').textContent = order.poNumber + ' — ' + order.date;
+      document.getElementById('detailContent').innerHTML = `
+        <div class="table-wrap" style="margin-bottom:1rem;">
+          <table>
+            <thead><tr><th>Item</th><th>Unit</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+            <tbody>${order.items.map(i => `<tr>
+              <td>${escHtml(i.itemName || '')}</td>
+              <td>${escHtml(i.unit || '')}</td>
+              <td><strong>${i.qtyOrdered}</strong></td>
+              <td>${cur}${Number(i.pricePerUnit || 0).toFixed(2)}</td>
+              <td>${cur}${(i.qtyOrdered * i.pricePerUnit).toFixed(2)}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>
+        <div style="text-align:right;font-size:1.1rem;font-weight:700;color:var(--primary);">
+          Grand Total: ${cur}${Number(order.totalEstimate).toFixed(2)}
+        </div>`;
+      document.getElementById('detailModal').style.display = 'flex';
+    }
+
+    function closeDetail() { document.getElementById('detailModal').style.display = 'none'; }
+    document.getElementById('detailModal').addEventListener('click', function(e) { if (e.target === this) closeDetail(); });
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

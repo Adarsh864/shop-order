@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Purchase Order — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="navbar"></nav>
+  <div class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:1.25rem;">
+      <h1 class="page-title" style="margin-bottom:0">Purchase Order</h1>
+      <div style="display:flex;gap:.5rem;flex-wrap:nowrap;">
+        <button class="btn btn-secondary" onclick="clearSelection()">Clear</button>
+        <button class="btn btn-outline" onclick="openAddItemModal()">+ Add</button>
+        <button class="btn btn-primary" onclick="generateOrderPDF()">Generate PDF</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:1rem;">
+      <p style="font-size:.85rem;color:var(--text-muted);">Items below <strong>minimum level</strong> are pre-selected. Adjust quantities, add items manually, then generate PDF.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="checkAll" onchange="toggleAll(this.checked)"></th>
+          <th>Item Name</th><th>Supplier</th><th>Unit</th><th>Current Stock</th>
+          <th>Order Qty</th><th>Price/Unit</th><th>Line Total</th><th></th>
+        </tr></thead>
+        <tbody id="poBody"><tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="totals-bar">
+      <span class="total-label">Selected: <strong id="selectedCount">0</strong></span>
+      <span class="total-label">Estimated Total:</span>
+      <span class="total-value" id="grandTotal">₹0.00</span>
+    </div>
+  </div>
+
+  <!-- Add item modal -->
+  <div class="modal-overlay" id="addItemModal" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-title">Add Item to Order <button class="modal-close" onclick="closeAddItemModal()">&times;</button></div>
+      <div class="form-group"><label>Select Item</label><select id="addItemSelect" style="width:100%;"><option value="">Choose…</option></select></div>
+      <div class="form-group"><label>Order Quantity</label><input type="number" id="addItemQty" min="1" value="1"></div>
+      <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem;">
+        <button class="btn btn-secondary" onclick="closeAddItemModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="addItemToOrder()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="js/pdf.js"></script>
+  <script>
+    let orderRows = [];
+    let allItems = [];
+    let settings = {};
+
+    async function init() {
+      const ok = await requireLogin();
+      if (!ok) return;
+      await renderNavbar();
+      [allItems, settings] = await Promise.all([getItems(), getSettings()]);
+      const cur = (settings && settings.currency) || '₹';
+      document.getElementById('grandTotal').textContent = cur + '0.00';
+
+      const suppliers = await getSuppliers();
+      const lowItems = allItems.filter(i => i.stock < 4);
+      orderRows = lowItems.map(item => {
+        const sup = suppliers.find(s => s.id === item.supplierId);
+        return {
+          itemId: item.id, itemName: item.name, category: item.category || '',
+          unit: item.unit || '', currentStock: item.stock, minLevel: 4,
+          pricePerUnit: item.pricePerUnit || 0,
+          qtyOrdered: Math.max(1, 4 - item.stock),
+          supplierId: item.supplierId || '',
+          supplierName: sup ? sup.name : 'Unknown Supplier',
+          checked: true,
+        };
+      });
+      renderPOTable();
+    }
+
+    function renderPOTable() {
+      const cur = (settings && settings.currency) || '₹';
+      const tbody = document.getElementById('poBody');
+      if (orderRows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:2rem;">No items. Add manually or reduce stock below min level.</td></tr>';
+        updateTotals();
+        return;
+      }
+      tbody.innerHTML = orderRows.map((row, idx) => {
+        const isOut = row.currentStock === 0;
+        const isLow = !isOut && row.currentStock < row.minLevel;
+        const style = isOut ? 'color:#dc2626;' : isLow ? 'color:#ea580c;' : '';
+        return `<tr style="${style}">
+          <td data-label=""><input type="checkbox" ${row.checked ? 'checked' : ''} onchange="toggleRow(${idx},this.checked)"></td>
+          <td data-label="Item"><strong>${escHtml(row.itemName)}</strong></td>
+          <td data-label="Supplier"><span class="badge badge-info">${escHtml(row.supplierName || '—')}</span></td>
+          <td data-label="Unit">${escHtml(row.unit)}</td>
+          <td data-label="Stock">${row.currentStock} <span class="badge ${isOut ? 'badge-danger' : 'badge-warning'}">${isOut ? 'Out' : 'Low'}</span></td>
+          <td data-label="Order Qty"><input type="number" class="qty-input" value="${row.qtyOrdered}" min="1" onchange="setQty(${idx},this.value)" ${!row.checked ? 'disabled' : ''}></td>
+          <td data-label="Price">${cur}${Number(row.pricePerUnit).toFixed(2)}</td>
+          <td data-label="Total">${cur}${(row.checked ? row.qtyOrdered * row.pricePerUnit : 0).toFixed(2)}</td>
+          <td data-label=""><button class="btn btn-sm btn-danger" onclick="removeRow(${idx})">✕</button></td>
+        </tr>`;
+      }).join('');
+      updateTotals();
+    }
+
+    function toggleRow(idx, checked) { orderRows[idx].checked = checked; renderPOTable(); }
+    function setQty(idx, val)        { orderRows[idx].qtyOrdered = Math.max(1, Number(val)); updateTotals(); }
+    function removeRow(idx)          { orderRows.splice(idx, 1); renderPOTable(); }
+    function toggleAll(checked)      { orderRows.forEach(r => r.checked = checked); renderPOTable(); }
+
+    function updateTotals() {
+      const cur = (settings && settings.currency) || '₹';
+      const selected = orderRows.filter(r => r.checked);
+      const total = selected.reduce((s, r) => s + r.qtyOrdered * r.pricePerUnit, 0);
+      document.getElementById('selectedCount').textContent = selected.length;
+      document.getElementById('grandTotal').textContent = cur + total.toFixed(2);
+      document.getElementById('checkAll').checked = orderRows.length > 0 && orderRows.every(r => r.checked);
+    }
+
+    function clearSelection() { orderRows.forEach(r => { r.checked = false; r.qtyOrdered = 1; }); renderPOTable(); }
+
+    function openAddItemModal() {
+      const sel = document.getElementById('addItemSelect');
+      const existingIds = new Set(orderRows.map(r => r.itemId));
+      sel.innerHTML = '<option value="">Choose…</option>';
+      allItems.filter(i => !existingIds.has(i.id)).forEach(i => {
+        const o = document.createElement('option');
+        o.value = i.id;
+        o.textContent = `${i.name} (stock: ${i.stock} ${i.unit})`;
+        sel.appendChild(o);
+      });
+      document.getElementById('addItemQty').value = 1;
+      document.getElementById('addItemModal').style.display = 'flex';
+    }
+
+    function closeAddItemModal() { document.getElementById('addItemModal').style.display = 'none'; }
+
+    async function addItemToOrder() {
+      const itemId = document.getElementById('addItemSelect').value;
+      const qty = Number(document.getElementById('addItemQty').value) || 1;
+      if (!itemId) { showToast('Select an item', 'error'); return; }
+      const item = allItems.find(i => i.id === itemId);
+      if (!item) return;
+      const suppliers = await getSuppliers();
+      const sup = suppliers.find(s => s.id === item.supplierId);
+      orderRows.push({
+        itemId: item.id, itemName: item.name, category: item.category || '',
+        unit: item.unit || '', currentStock: item.stock, minLevel: 4,
+        pricePerUnit: item.pricePerUnit || 0, qtyOrdered: qty,
+        supplierId: item.supplierId || '',
+        supplierName: sup ? sup.name : 'Unknown Supplier',
+        checked: true,
+      });
+      closeAddItemModal();
+      renderPOTable();
+      showToast('Item added to order');
+    }
+
+    async function generateOrderPDF() {
+      const selected = orderRows.filter(r => r.checked);
+      if (selected.length === 0) { showToast('No items selected', 'error'); return; }
+
+      const today = new Date().toLocaleDateString('en-IN');
+
+      // Group by supplierId
+      const groups = {};
+      selected.forEach(r => {
+        const key = r.supplierId || '__none__';
+        if (!groups[key]) groups[key] = { supplierId: r.supplierId, supplierName: r.supplierName || 'Unknown Supplier', items: [] };
+        groups[key].items.push(r);
+      });
+
+      const groupList = Object.values(groups);
+
+      try {
+        for (const group of groupList) {
+          const poNumber = 'PO-' + String(Date.now()).slice(-6) + Math.floor(Math.random() * 100);
+          const totalEstimate = group.items.reduce((s, r) => s + r.qtyOrdered * r.pricePerUnit, 0);
+          const order = {
+            poNumber,
+            date: today,
+            status: 'pending',
+            totalEstimate,
+            supplierName: group.supplierName,
+            items: group.items.map(r => ({
+              itemId: r.itemId, itemName: r.itemName, category: r.category,
+              unit: r.unit, currentStock: r.currentStock, minLevel: 4,
+              qtyOrdered: r.qtyOrdered, pricePerUnit: r.pricePerUnit,
+            })),
+          };
+          generatePDF(order, settings);
+          await addOrder(order);
+          // Small delay so filenames don't collide
+          await new Promise(res => setTimeout(res, 300));
+        }
+
+        showToast(`${groupList.length} PDF${groupList.length > 1 ? 's' : ''} generated & saved!`);
+        setTimeout(() => { window.location.href = 'order-history.html'; }, 1800);
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    document.getElementById('addItemModal').addEventListener('click', function(e) { if (e.target === this) closeAddItemModal(); });
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="navbar"></nav>
+  <div class="page">
+    <h1 class="page-title">Settings</h1>
+
+    <div class="card settings-section">
+      <h2>Shop Information</h2>
+      <form id="shopForm">
+        <div class="form-row">
+          <div class="form-group"><label>Shop Name *</label><input type="text" id="s_shopName" required></div>
+          <div class="form-group"><label>Phone</label><input type="tel" id="s_phone"></div>
+        </div>
+        <div class="form-group"><label>Address</label><textarea id="s_address" rows="2"></textarea></div>
+        <div class="form-group"><label>Default Min Stock Level</label><input type="number" id="s_minLevel" min="0"></div>
+        <button type="submit" class="btn btn-primary">Save Shop Info</button>
+      </form>
+    </div>
+
+    <div class="card settings-section">
+      <h2>Change Password</h2>
+      <form id="pwForm">
+        <div class="form-row">
+          <div class="form-group"><label>Current Password *</label><input type="password" id="p_current" required></div>
+          <div class="form-group"><label>New Password *</label><input type="password" id="p_new" required minlength="4"></div>
+          <div class="form-group"><label>Confirm New Password *</label><input type="password" id="p_confirm" required></div>
+        </div>
+        <button type="submit" class="btn btn-primary">Change Password</button>
+      </form>
+    </div>
+
+    <div class="card settings-section">
+      <h2>Data Management</h2>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-outline" onclick="exportData()">Export All Data (JSON)</button>
+        <label class="btn btn-outline" style="cursor:pointer;">
+          Import Data (JSON)
+          <input type="file" id="importFile" accept=".json" style="display:none;" onchange="importData(this)">
+        </label>
+        <button class="btn btn-danger" onclick="resetData()">Reset All Data</button>
+      </div>
+      <p style="margin-top:.75rem;font-size:.8rem;color:var(--text-muted);">Export saves all data as JSON. Import replaces everything. Reset permanently erases all data.</p>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    async function init() {
+      const ok = await requireLogin();
+      if (!ok) return;
+      await renderNavbar();
+      const s = await getSettings();
+      document.getElementById('s_shopName').value  = s.shopName || '';
+      document.getElementById('s_phone').value     = s.phone || '';
+      document.getElementById('s_address').value   = s.address || '';
+      document.getElementById('s_minLevel').value  = s.defaultMinLevel || 10;
+    }
+
+    document.getElementById('shopForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      await saveSettings({
+        shopName:        document.getElementById('s_shopName').value.trim(),
+        phone:           document.getElementById('s_phone').value.trim(),
+        address:         document.getElementById('s_address').value.trim(),
+        defaultMinLevel: Number(document.getElementById('s_minLevel').value) || 10,
+      });
+      showToast('Shop info saved');
+      renderNavbar();
+    });
+
+    document.getElementById('pwForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const currentPassword = document.getElementById('p_current').value;
+      const newPassword     = document.getElementById('p_new').value;
+      const confirm         = document.getElementById('p_confirm').value;
+      if (newPassword !== confirm) { showToast('Passwords do not match', 'error'); return; }
+      try {
+        await saveSettings({ currentPassword, newPassword });
+        this.reset();
+        showToast('Password changed');
+      } catch (err) {
+        showToast(err.message || 'Wrong current password', 'error');
+      }
+    });
+
+    async function exportData() {
+      const [items, suppliers, orders, settings] = await Promise.all([getItems(), getSuppliers(), getOrders(), getSettings()]);
+      const blob = new Blob([JSON.stringify({ items, suppliers, orders, settings, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'shoporder_backup_' + new Date().toISOString().slice(0,10) + '.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast('Data exported');
+    }
+
+    function importData(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!confirmDialog('This will replace ALL current data. Continue?')) { input.value = ''; return; }
+          showToast('Import not supported via API — use DB restore tools for bulk import.', 'error');
+        } catch { showToast('Invalid JSON file', 'error'); }
+        input.value = '';
+      };
+      reader.readAsText(file);
+    }
+
+    async function resetData() {
+      if (!confirmDialog('RESET ALL DATA? Permanently deletes all items, suppliers, orders, and settings.')) return;
+      if (!confirmDialog('Are you absolutely sure? This cannot be undone.')) return;
+      // Delete all via API
+      const [items, suppliers, orders] = await Promise.all([getItems(), getSuppliers(), getOrders()]);
+      await Promise.all([
+        ...items.map(i => fetch('/api/items/' + i.id, { method: 'DELETE' })),
+        ...suppliers.map(s => fetch('/api/suppliers/' + s.id, { method: 'DELETE' })),
+        ...orders.map(o => fetch('/api/orders/' + o.id, { method: 'DELETE' })),
+      ]);
+      showToast('All data reset. Logging out…', 'warning');
+      setTimeout(() => logout(), 2000);
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

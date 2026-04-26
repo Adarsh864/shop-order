@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <rect width="48" height="48" rx="12" fill="#2563eb"/>
+        <path d="M12 34V18l12-6 12 6v16" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+        <rect x="19" y="26" width="10" height="8" rx="1" fill="#fff"/>
+        <circle cx="24" cy="19" r="3" fill="#93c5fd"/>
+      </svg>
+      <h1>ShopOrder</h1>
+      <p>Inventory & Purchase Order Manager</p>
+    </div>
+
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="loginBtn" style="width:100%;justify-content:center;padding:.7rem;">
+        Login
+      </button>
+      <p id="loginError" style="color:#dc2626;font-size:.8rem;margin-top:.5rem;display:none;"></p>
+    </form>
+    <p style="margin-top:1rem;font-size:.78rem;color:#94a3b8;text-align:center;">Default password: shop123</p>
+  </div>
+
+  <script>
+    // Redirect if already logged in
+    fetch('/api/auth/session').then(r => r.json()).then(s => {
+      if (s && s.loggedIn) window.location.href = 'dashboard.html';
+    }).catch(() => {});
+
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const errEl = document.getElementById('loginError');
+      const password = document.getElementById('password').value;
+      btn.disabled = true;
+      btn.textContent = 'Logging in…';
+      errEl.style.display = 'none';
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        if (res.ok) {
+          window.location.href = 'dashboard.html';
+        } else {
+          errEl.textContent = 'Wrong password. Try shop123';
+          errEl.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Login';
+        }
+      } catch (err) {
+        errEl.textContent = 'Server error. Is the server running?';
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Login';
+      }
+    });
+  </script>
+</body>
+</html>

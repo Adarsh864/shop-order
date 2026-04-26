@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="navbar"></nav>
+  <div class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:1.25rem;">
+      <h1 class="page-title" style="margin-bottom:0">Dashboard</h1>
+      <a href="purchase-order.html" class="btn btn-primary">+ Generate Purchase Order</a>
+    </div>
+    <div class="stat-grid" id="statGrid"><div class="stat-card"><div class="stat-value">…</div><div class="stat-label">Loading</div></div></div>
+    <div class="card chart-card">
+      <h2 style="font-size:.95rem;font-weight:600;margin-bottom:1rem;">Low Stock Items (Top 5)</h2>
+      <div class="chart-wrap"><canvas id="lowStockChart"></canvas></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <h2 style="font-size:.95rem;font-weight:600;">Recent Orders</h2>
+        <a href="order-history.html" style="font-size:.82rem;color:var(--primary);">View all →</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>PO Number</th><th>Date</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
+          <tbody id="recentOrdersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script>
+    async function init() {
+      const ok = await requireLogin();
+      if (!ok) return;
+      await renderNavbar();
+
+      const [items, orders, settings] = await Promise.all([getItems(), getOrders(), getSettings()]);
+      const cur = (settings && settings.currency) || '₹';
+      const now = new Date();
+
+      const lowStock   = items.filter(i => i.stock > 0 && i.stock < 4);
+      const outOfStock = items.filter(i => i.stock === 0);
+      const ordersThisMonth = orders.filter(o => {
+        const d = new Date(o.createdAt || o.date);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      });
+
+      document.getElementById('statGrid').innerHTML = [
+        { label: 'Total Items',       value: items.length,            cls: '' },
+        { label: 'Low Stock',         value: lowStock.length,         cls: 'warning' },
+        { label: 'Out of Stock',      value: outOfStock.length,       cls: 'danger' },
+        { label: 'Orders This Month', value: ordersThisMonth.length,  cls: 'success' },
+      ].map(s => `<div class="stat-card ${s.cls}"><div class="stat-value">${s.value}</div><div class="stat-label">${s.label}</div></div>`).join('');
+
+      const chartItems = [...items]
+        .filter(i => i.stock < 4)
+        .sort((a, b) => a.stock - b.stock)
+        .slice(0, 5);
+
+      new Chart(document.getElementById('lowStockChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: chartItems.map(i => i.name),
+          datasets: [
+            { label: 'Current Stock', data: chartItems.map(i => i.stock), backgroundColor: chartItems.map(i => i.stock === 0 ? '#fca5a5' : '#fdba74'), borderColor: chartItems.map(i => i.stock === 0 ? '#dc2626' : '#ea580c'), borderWidth: 1 },
+            { label: 'Threshold (4)', data: chartItems.map(() => 4),       backgroundColor: '#bfdbfe', borderColor: '#2563eb', borderWidth: 1 },
+          ],
+        },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { beginAtZero: true } } },
+      });
+
+      const recent = orders.slice(0, 5);
+      const tbody = document.getElementById('recentOrdersBody');
+      tbody.innerHTML = recent.length === 0
+        ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:2rem;">No orders yet</td></tr>'
+        : recent.map(o => `<tr>
+            <td data-label="PO Number"><strong>${escHtml(o.poNumber)}</strong></td>
+            <td data-label="Date">${escHtml(o.date)}</td>
+            <td data-label="Items">${o.items.length} item${o.items.length !== 1 ? 's' : ''}</td>
+            <td data-label="Total">${cur}${Number(o.totalEstimate).toFixed(2)}</td>
+            <td data-label="Status"><span class="badge ${o.status === 'received' ? 'badge-success' : 'badge-info'}">${o.status === 'received' ? 'Received' : 'Pending'}</span></td>
+          </tr>`).join('');
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

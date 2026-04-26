@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventory — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="navbar"></nav>
+  <div class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:1.25rem;">
+      <h1 class="page-title" style="margin-bottom:0">Inventory</h1>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+        <button class="btn btn-warning" onclick="orderLowStock()">Order Low/Out Stock</button>
+        <label class="btn btn-outline" style="cursor:pointer;" title="Import CSV">
+          ↑ Import CSV
+          <input type="file" id="importCsvFile" accept=".csv" style="display:none;" onchange="importCSV(this)">
+        </label>
+        <button class="btn btn-secondary" onclick="downloadCSVTemplate()">↓ Template</button>
+        <button class="btn btn-primary" onclick="openAddModal()">+ Add Item</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input type="text" class="search-input" id="searchInput" placeholder="Search items…" oninput="renderTable()">
+      <select id="statusFilter" onchange="renderTable()" style="width:auto;">
+        <option value="">All Status</option>
+        <option value="in">In Stock</option>
+        <option value="low">Low Stock</option>
+        <option value="out">Out of Stock</option>
+      </select>
+      <select id="supplierFilter" onchange="renderTable()" style="width:auto;"><option value="">All Suppliers</option></select>
+      <div style="display:flex;align-items:center;gap:.4rem;">
+        <label style="font-size:.8rem;color:var(--text-muted);white-space:nowrap;">Low stock below</label>
+        <input type="number" id="thresholdInput" min="1" value="4"
+          style="width:60px;padding:.3rem .5rem;border:1px solid var(--border);border-radius:var(--radius);font-size:.85rem;text-align:center;"
+          placeholder="4" oninput="updateThreshold(this.value)">
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Item Name</th><th>Stock</th><th>Unit</th><th>Price/Unit</th><th>Supplier</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="inventoryBody"><tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="itemModal" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-title">
+        <span id="modalTitle">Add Item</span>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <form id="itemForm">
+        <input type="hidden" id="editId">
+        <div class="form-row">
+          <div class="form-group"><label>Item Name *</label><input type="text" id="f_name" required></div>
+        </div>
+        <div class="form-group"><label>Current Stock *</label><input type="number" id="f_stock" min="0" step="any" required></div>
+        <div class="form-row">
+          <div class="form-group"><label>Unit</label><input type="text" id="f_unit" placeholder="kg, pcs, L…"></div>
+          <div class="form-group"><label>Price/Unit</label><input type="number" id="f_price" min="0" step="any" placeholder="0.00"></div>
+        </div>
+        <div class="form-group"><label>Supplier</label><select id="f_supplier"><option value="">None</option></select></div>
+        <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem;">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    let allItems = [], allSuppliers = [], cur = '₹';
+
+    async function init() {
+      const ok = await requireLogin();
+      if (!ok) return;
+      await renderNavbar();
+      await reload();
+    }
+
+    async function reload() {
+      [allItems, allSuppliers] = await Promise.all([getItems(), getSuppliers()]);
+      const settings = await getSettings();
+      cur = (settings && settings.currency) || '₹';
+      const t = settings && settings.defaultMinLevel ? settings.defaultMinLevel : 4;
+      LOW_STOCK_THRESHOLD = t;
+      document.getElementById('thresholdInput').value = t;
+      populateSupplierFilter();
+      renderTable();
+    }
+
+    async function updateThreshold(val) {
+      const t = Math.max(1, Number(val) || 1);
+      LOW_STOCK_THRESHOLD = t;
+      renderTable();
+      // Debounce save to settings
+      clearTimeout(window._thresholdTimer);
+      window._thresholdTimer = setTimeout(async () => {
+        await saveSettings({ defaultMinLevel: t });
+      }, 800);
+    }
+
+    function populateSupplierFilter() {
+      const sel = document.getElementById('supplierFilter');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">All Suppliers</option>';
+      allSuppliers.forEach(s => {
+        const o = document.createElement('option'); o.value = s.id; o.textContent = s.name;
+        if (s.id === current) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+
+    function renderTable() {
+      const q        = document.getElementById('searchInput').value.toLowerCase();
+      const status   = document.getElementById('statusFilter').value;
+      const supplier = document.getElementById('supplierFilter').value;
+
+      const items = allItems.filter(i => {
+        if (q && !i.name.toLowerCase().includes(q)) return false;
+        if (supplier && i.supplierId !== supplier) return false;
+        if (status === 'out' && i.stock !== 0) return false;
+        if (status === 'low' && !(i.stock > 0 && i.stock < i.minLevel)) return false;
+        if (status === 'in' && i.stock < i.minLevel) return false;
+        return true;
+      });
+
+      const tbody = document.getElementById('inventoryBody');
+      if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:2rem;">No items found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = items.map(item => {
+        const sup = allSuppliers.find(s => s.id === item.supplierId);
+        const { label, cls } = getStatusLabel(item);
+        return `<tr>
+          <td data-label="Item"><strong>${escHtml(item.name)}</strong></td>
+          <td data-label="Stock"><input type="number" class="qty-input" value="${item.stock}" min="0" onchange="updateStock('${item.id}',this.value)"></td>
+          <td data-label="Unit">${escHtml(item.unit || '')}</td>
+          <td data-label="Price/Unit">${cur}${Number(item.pricePerUnit || 0).toFixed(2)}</td>
+          <td data-label="Supplier">${sup ? escHtml(sup.name) : '<span style="color:var(--text-muted)">—</span>'}</td>
+          <td data-label="Status"><span class="badge ${cls}">${label}</span></td>
+          <td data-label="Actions"><div class="action-group">
+            <button class="btn btn-sm btn-outline" onclick="openEditModal('${item.id}')">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="removeItem('${item.id}')">Del</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function updateStock(id, val) {
+      const stock = Math.max(0, Number(val));
+      await updateItem(id, { stock });
+      const idx = allItems.findIndex(i => i.id === id);
+      if (idx !== -1) allItems[idx].stock = stock;
+      renderTable();
+      showToast('Stock updated');
+    }
+
+    async function removeItem(id) {
+      if (!confirmDialog('Delete this item?')) return;
+      await deleteItem(id);
+      allItems = allItems.filter(i => i.id !== id);
+      renderTable();
+      showToast('Item deleted', 'error');
+    }
+
+    function populateSupplierDropdown(selectedId) {
+      const sel = document.getElementById('f_supplier');
+      sel.innerHTML = '<option value="">None</option>';
+      allSuppliers.forEach(s => {
+        const o = document.createElement('option'); o.value = s.id; o.textContent = s.name;
+        if (s.id === selectedId) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+
+    function openAddModal() {
+      document.getElementById('modalTitle').textContent = 'Add Item';
+      document.getElementById('editId').value = '';
+      document.getElementById('itemForm').reset();
+      populateSupplierDropdown('');
+      document.getElementById('itemModal').style.display = 'flex';
+    }
+
+    function openEditModal(id) {
+      const item = allItems.find(i => i.id === id);
+      if (!item) return;
+      document.getElementById('modalTitle').textContent = 'Edit Item';
+      document.getElementById('editId').value = id;
+      document.getElementById('f_name').value = item.name;
+      document.getElementById('f_stock').value = item.stock;
+      document.getElementById('f_minLevel').value = item.minLevel;
+      document.getElementById('f_unit').value = item.unit || '';
+      document.getElementById('f_price').value = item.pricePerUnit || '';
+      populateSupplierDropdown(item.supplierId || '');
+      document.getElementById('itemModal').style.display = 'flex';
+    }
+
+    function closeModal() { document.getElementById('itemModal').style.display = 'none'; }
+
+    document.getElementById('itemForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const id = document.getElementById('editId').value;
+      const data = {
+        name:  document.getElementById('f_name').value.trim(),
+        stock: Number(document.getElementById('f_stock').value),
+        unit:         document.getElementById('f_unit').value.trim(),
+        pricePerUnit: Number(document.getElementById('f_price').value) || 0,
+        supplierId:   document.getElementById('f_supplier').value,
+      };
+      if (id) { await updateItem(id, data); showToast('Item updated'); }
+      else    { await addItem(data);        showToast('Item added'); }
+      closeModal();
+      await reload();
+    });
+
+    function orderLowStock() { window.location.href = 'purchase-order.html'; }
+
+    function downloadCSVTemplate() {
+      const csv = 'ITEM NAME,STOCK,UNIT,PRICE/UNIT,SUPPLIER\nSugar,50,kg,45,\nRice,20,kg,60,';
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'inventory_template.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function parseCSV(text) {
+      const lines = text.trim().split(/\r?\n/);
+      if (lines.length < 2) return [];
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z/]/g, ''));
+      const col = name => headers.indexOf(name);
+      const iName  = col('itemname');
+      const iStock = col('stock');
+      const iUnit  = col('unit');
+      const iPrice = col('price/unit');
+      const iSup   = col('supplier');
+      if (iName === -1) return null; // bad template
+
+      return lines.slice(1).map(line => {
+        const cells = line.split(',').map(c => c.trim());
+        return {
+          name:         cells[iName]  || '',
+          stock:        Number(cells[iStock] || 0),
+          unit:         iUnit  !== -1 ? (cells[iUnit]  || '') : '',
+          pricePerUnit: iPrice !== -1 ? Number(cells[iPrice] || 0) : 0,
+          supplierName: iSup   !== -1 ? (cells[iSup]   || '') : '',
+        };
+      }).filter(r => r.name);
+    }
+
+    async function importCSV(input) {
+      const file = input.files[0];
+      if (!file) return;
+      input.value = '';
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if (rows === null) { showToast('CSV missing "ITEM NAME" column', 'error'); return; }
+      if (rows.length === 0) { showToast('No data rows found', 'error'); return; }
+
+      // Build supplier name→id map
+      const supMap = {};
+      allSuppliers.forEach(s => { supMap[s.name.toLowerCase()] = s.id; });
+
+      let added = 0, skipped = 0;
+      for (const row of rows) {
+        if (!row.name) { skipped++; continue; }
+        const data = {
+          name:         row.name,
+          stock:        row.stock,
+          unit:         row.unit,
+          pricePerUnit: row.pricePerUnit,
+          supplierId:   supMap[row.supplierName.toLowerCase()] || '',
+        };
+        try { await addItem(data); added++; }
+        catch { skipped++; }
+      }
+      await reload();
+      showToast(`Imported ${added} item${added !== 1 ? 's' : ''}${skipped ? `, ${skipped} skipped` : ''}`);
+    }
+
+    document.getElementById('itemModal').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

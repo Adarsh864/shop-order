@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suppliers — ShopOrder</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="navbar"></nav>
+  <div class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:1.25rem;">
+      <h1 class="page-title" style="margin-bottom:0">Suppliers</h1>
+      <button class="btn btn-primary" onclick="openModal()">+ Add Supplier</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Phone</th><th>Address</th><th>Items Linked</th><th>Actions</th></tr></thead>
+        <tbody id="suppliersBody"><tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="supModal" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-title"><span id="modalTitle">Add Supplier</span><button class="modal-close" onclick="closeModal()">&times;</button></div>
+      <form id="supForm">
+        <input type="hidden" id="editId">
+        <div class="form-group"><label>Supplier Name *</label><input type="text" id="f_name" required></div>
+        <div class="form-group"><label>Phone</label><input type="tel" id="f_phone"></div>
+        <div class="form-group"><label>Address</label><textarea id="f_address" rows="2"></textarea></div>
+        <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem;">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    let allSuppliers = [], allItems = [];
+
+    async function init() {
+      const ok = await requireLogin();
+      if (!ok) return;
+      await renderNavbar();
+      await reload();
+    }
+
+    async function reload() {
+      [allSuppliers, allItems] = await Promise.all([getSuppliers(), getItems()]);
+      renderSuppliers();
+    }
+
+    function renderSuppliers() {
+      const tbody = document.getElementById('suppliersBody');
+      if (allSuppliers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:2rem;">No suppliers yet</td></tr>';
+        return;
+      }
+      tbody.innerHTML = allSuppliers.map(s => {
+        const count = allItems.filter(i => i.supplierId === s.id).length;
+        return `<tr>
+          <td data-label="Name"><strong>${escHtml(s.name)}</strong></td>
+          <td data-label="Phone">${escHtml(s.phone || '—')}</td>
+          <td data-label="Address">${escHtml(s.address || '—')}</td>
+          <td data-label="Items"><span class="badge badge-success">${count} item${count !== 1 ? 's' : ''}</span></td>
+          <td data-label="Actions"><div class="action-group">
+            <button class="btn btn-sm btn-outline" onclick="openEditModal('${s.id}')">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="removeSup('${s.id}',${count})">Del</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+    }
+
+    function openModal() {
+      document.getElementById('modalTitle').textContent = 'Add Supplier';
+      document.getElementById('editId').value = '';
+      document.getElementById('supForm').reset();
+      document.getElementById('supModal').style.display = 'flex';
+    }
+
+    function openEditModal(id) {
+      const s = allSuppliers.find(x => x.id === id);
+      if (!s) return;
+      document.getElementById('modalTitle').textContent = 'Edit Supplier';
+      document.getElementById('editId').value = id;
+      document.getElementById('f_name').value = s.name;
+      document.getElementById('f_phone').value = s.phone || '';
+      document.getElementById('f_address').value = s.address || '';
+      document.getElementById('supModal').style.display = 'flex';
+    }
+
+    function closeModal() { document.getElementById('supModal').style.display = 'none'; }
+
+    async function removeSup(id, count) {
+      const msg = count > 0 ? `${count} item(s) linked. Deleting will unlink them. Continue?` : 'Delete this supplier?';
+      if (!confirmDialog(msg)) return;
+      // Unlink items
+      const linked = allItems.filter(i => i.supplierId === id);
+      await Promise.all(linked.map(i => updateItem(i.id, { supplierId: '' })));
+      await deleteSupplier(id);
+      showToast('Supplier deleted', 'error');
+      await reload();
+    }
+
+    document.getElementById('supForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const id = document.getElementById('editId').value;
+      const data = {
+        name:    document.getElementById('f_name').value.trim(),
+        phone:   document.getElementById('f_phone').value.trim(),
+        address: document.getElementById('f_address').value.trim(),
+      };
+      if (id) { await updateSupplier(id, data); showToast('Supplier updated'); }
+      else    { await addSupplier(data);         showToast('Supplier added'); }
+      closeModal();
+      await reload();
+    });
+
+    document.getElementById('supModal').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
