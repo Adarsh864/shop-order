@@ -392,6 +392,7 @@ input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; accent-color:
   -webkit-appearance: textfield;
   appearance: auto;
   color: var(--text);
+  -webkit-text-fill-color: var(--text);
 }
 
 /* ── Chart ── */
@@ -548,6 +549,7 @@ input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; accent-color:
   .toolbar .search-input { max-width: 100%; min-width: 0; }
   .toolbar select { width: 100%; }
   .toolbar > div { width: 100%; }
+  .toolbar input[type=date] { width: 100%; min-width: 0; flex: 1; }
 
   /* Form rows: single col */
   .form-row { grid-template-columns: 1fr; }

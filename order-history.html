@@ -44,8 +44,20 @@
       Recent Orders (Last 30 Days) <span id="recentCount">0</span>
     </div>
     <div class="toolbar">
-      <input type="date" id="dateFrom" onchange="renderOrders()" title="From date">
-      <input type="date" id="dateTo"   onchange="renderOrders()" title="To date">
+      <div style="display:flex;align-items:center;gap:.4rem;">
+        <label style="font-size:.8rem;color:var(--text-muted);white-space:nowrap;">From</label>
+        <input type="text" id="dateFrom" placeholder="Select date"
+          onfocus="this.type='date'"
+          onblur="if(!this.value)this.type='text'"
+          onchange="renderOrders()">
+      </div>
+      <div style="display:flex;align-items:center;gap:.4rem;">
+        <label style="font-size:.8rem;color:var(--text-muted);white-space:nowrap;">To</label>
+        <input type="text" id="dateTo" placeholder="Select date"
+          onfocus="this.type='date'"
+          onblur="if(!this.value)this.type='text'"
+          onchange="renderOrders()">
+      </div>
       <select id="statusFilter" onchange="renderOrders()" style="width:auto;">
         <option value="">All Status</option>
         <option value="pending">Pending</option>
@@ -171,8 +183,10 @@
     }
 
     function clearFilters() {
-      document.getElementById('dateFrom').value = '';
-      document.getElementById('dateTo').value = '';
+      const from = document.getElementById('dateFrom');
+      const to   = document.getElementById('dateTo');
+      from.value = ''; from.type = 'text';
+      to.value   = ''; to.type   = 'text';
       document.getElementById('statusFilter').value = '';
       renderOrders();
     }
