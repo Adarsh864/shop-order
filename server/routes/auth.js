@@ -12,7 +12,7 @@ router.get('/setup-status', async (req, res) => {
   }
 });
 
-// POST /api/auth/signup  (only if no account yet)
+// POST /api/auth/signup  (only if no proper account yet)
 router.post('/signup', async (req, res) => {
   try {
     const { shopName, password } = req.body;
@@ -20,8 +20,9 @@ router.post('/signup', async (req, res) => {
     if (!password || password.length < 4)  return res.status(400).json({ error: 'Password must be at least 4 characters' });
 
     const existing = await Settings.findOne();
-    if (existing && existing.password) {
-      return res.status(409).json({ error: 'Account already exists' });
+    // Block only if account was properly set up by a user (has non-empty shopName + password)
+    if (existing && existing.password && existing.shopName) {
+      return res.status(409).json({ error: 'Account already exists. Please login.' });
     }
 
     if (existing) {
@@ -40,13 +41,14 @@ router.post('/signup', async (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    const { password } = req.body;
+    const { shopName, password } = req.body;
     const settings = await Settings.findOne();
     if (!settings || !settings.password) {
       return res.status(403).json({ error: 'No account. Please sign up first.' });
     }
-    if (password !== settings.password) {
-      return res.status(401).json({ error: 'Wrong password' });
+    const nameMatch = (shopName || '').trim().toLowerCase() === settings.shopName.trim().toLowerCase();
+    if (!nameMatch || password !== settings.password) {
+      return res.status(401).json({ error: 'Wrong shop name or password' });
     }
     req.session.loggedIn = true;
     req.session.shopName = settings.shopName;
